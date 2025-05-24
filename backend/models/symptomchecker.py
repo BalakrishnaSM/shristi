@@ -5,29 +5,27 @@ import base64
 from typing import Optional
 from dotenv import load_dotenv
 from google.cloud import translate_v3 as translate
+# Import Google Cloud Text-to-Speech client
+from google.cloud import texttospeech 
 from google import genai
 from google.genai import types
 from google.api_core import exceptions
-# import requests # Removed: No longer making direct HTTP requests to Dwani API
 
-# NEW: Import the dwani library
+# Import the dwani library
 import dwani 
 
-load_dotenv()  # Load environment variables from .env file
+load_dotenv()   # Load environment variables from .env file
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- Environment Variable Validation ---
-DWANI_API_BASE_URL = os.environ.get("DWANI_API_BASE_URL") # Make sure this is set in your .env
+DWANI_API_BASE_URL = os.environ.get("DWANI_API_BASE_URL")
 DWANI_API_KEY = os.environ.get("DWANI_API_KEY")
 PROJECT_ID = os.environ.get("GCP_PROJECT_ID")
 
 if not DWANI_API_KEY:
     raise ValueError("DWANI_API_KEY environment variable not set")
-# IMPORTANT: Ensure DWANI_API_BASE_URL is set in your .env file
-# This MUST be the base URL for the official Dwani API, not necessarily a Hugging Face Space URL.
-# It should be something like "https://api.dwani.ai/v1" or similar, as per Dwani's official docs.
 if not DWANI_API_BASE_URL:
     raise ValueError("DWANI_API_BASE_URL environment variable not set. Please set it to the official Dwani API base URL.")
 if not PROJECT_ID:
@@ -35,11 +33,15 @@ if not PROJECT_ID:
 # --- End Environment Variable Validation ---
 
 # --- Setup Dwani credentials globally ---
-# This configures the dwani library to use your API key and base URL
 dwani.api_key = DWANI_API_KEY
 dwani.api_base = DWANI_API_BASE_URL
 logging.info(f"Dwani API configured with base URL: {dwani.api_base}")
 # --- End Dwani setup ---
+
+# --- Setup Google Cloud Text-to-Speech client globally ---
+# This client needs to be initialized if we're using it
+gc_tts_client = texttospeech.TextToSpeechClient()
+# --- End Google Cloud Text-to-Speech setup ---
 
 
 def detect_language(text: str, project_id: str) -> str:
@@ -92,40 +94,62 @@ def translate_text(text: str, target_language_code: str, project_id: str) -> str
 
 def text_to_speech(text: str, language_code: str) -> Optional[str]: 
     """
-    Converts text to speech using the Dwani API via the dwani Python library.
+    Converts text to speech using either Google Cloud Text-to-Speech (for English)
+    or Dwani API (for other languages).
     Returns the base64 encoded audio data (MP3) with MIME prefix, or None if an error occurs.
     """
     try:
         logging.info(f"Attempting to generate speech for text: '{text[:50]}...' in language: '{language_code}'")
+        audio_binary_data = None
 
-        # Use the dwani library's Audio.speech method
-        # The dwani library handles the correct URL construction based on dwani.api_base
-        # It takes 'input' for the text and 'response_format' (e.g., "mp3")
-        audio_binary_data = dwani.Audio.speech(input=text, response_format="mp3")
+        if language_code == 'en':
+            # Use Google Cloud Text-to-Speech for English
+            synthesis_input = texttospeech.SynthesisInput(text=text)
+
+            # Choose a voice that matches the language and desired gender/variant
+            # 'en-US-Wavenet-D' is a common, natural-sounding US English voice (male).
+            # You can explore other voices in Google Cloud documentation.
+            voice = texttospeech.VoiceSelectionParams(
+                language_code="en-US",
+                name="en-US-Wavenet-D" 
+            )
+
+            # Select the type of audio file you want returned
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3
+            )
+
+            # Perform the text-to-speech request
+            logging.info(f"Using Google Cloud TTS for English ({voice.name})...")
+            response = gc_tts_client.synthesize_speech(
+                input=synthesis_input, voice=voice, audio_config=audio_config
+            )
+            audio_binary_data = response.audio_content
+
+        else:
+            # Use Dwani API for other languages
+            logging.info(f"Using Dwani API for language '{language_code}'...")
+            # Note: Dwani's `Audio.speech` method here doesn't have a direct `language` param
+            # based on previous errors and its documented usage.
+            audio_binary_data = dwani.Audio.speech(input=text, response_format="mp3")
 
         if not audio_binary_data:
-            logging.warning("Dwani API returned empty binary audio data.")
+            logging.warning("TTS API returned empty binary audio data.")
             return None
 
         # Encode the binary audio data to base64
-        # base64.b64encode returns bytes, .decode('utf-8') converts it to a string
         base64_audio = base64.b64encode(audio_binary_data).decode('utf-8')
 
-        # Add MIME type prefix to create a data URI, which browsers can play directly
-        mime_prefix = "data:audio/mpeg;base64,"
-        final_audio_data_uri = f"{mime_prefix}{base64_audio}"
+        # Add MIME type prefix to create a data URI
+        final_audio_data_uri = f"data:audio/mpeg;base64,{base64_audio}"
 
         logging.info(f"Successfully generated and encoded audio data (size: {len(audio_binary_data)} bytes).")
-        return final_audio_data_uri # Return the data URI string
+        return final_audio_data_uri
 
-    except dwani.error.APIError as e:
-        # Catch specific API errors from the dwani library
-        logging.trace("Dwani API error (dwani.error.APIError):", exc_info=True) # Use logging.exception for full traceback
-        logging.error(f"Dwani API error (dwani.error.APIError): {e}")
-        return None
+    # Use a general Exception catch to handle any error during speech generation
+    # This prevents crashes from specific API errors (like dwani.APIError not existing).
     except Exception as e:
-        # Catch any other general exceptions
-        logging.error(f"Text-to-speech error (general exception): {e}", exc_info=True) # exc_info=True for traceback
+        logging.error(f"Text-to-speech error: {e}", exc_info=True) 
         return None
 
 
@@ -195,7 +219,7 @@ def check_symptoms(symptom_description: str, user_language_code: str = None, max
     - Sinusitis: An infection of the sinuses can lead to headache, fever, and cough.
 
     Consult a medical professional for diagnosis and treatment.
-
+    
     Do not respond to text other than related to health.
     """
 
@@ -290,4 +314,3 @@ def check_symptoms(symptom_description: str, user_language_code: str = None, max
         "message": message_value,
         "isValidbase64": isValidbase64
     }
-

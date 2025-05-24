@@ -32,7 +32,7 @@ const LoginPage = () => {
       {/* Left Visual */}
       <div style={styles.left}>
         <img
-          src="https://modernruralindia.com/wp-content/uploads/2022/11/95567106.jpg"
+          src="https://images.fineartamerica.com/images-medium-large-5/health-care-leon-zernitsky.jpg"
           alt="VoiceCare"
           style={styles.image}
         />
@@ -80,7 +80,7 @@ const styles = {
   },
   left: {
     flex: 1,
-    background: "linear-gradient(to bottom right, #9be7e3, #daf3f0)",
+    background: "linear-gradient(to bottom right, #9be7e3,rgb(72, 92, 241))",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
@@ -93,7 +93,7 @@ const styles = {
   },
   right: {
     flex: 1,
-    background: "linear-gradient(to bottom right, #d8f3dc, #95d5b2)",
+    background: "linear-gradient(to bottom right,rgb(77, 164, 235),rgb(128, 157, 254))",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
